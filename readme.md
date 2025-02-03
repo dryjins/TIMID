@@ -43,9 +43,14 @@ cp config/.env.example config/.env
 
 ```
 
+
 ## Configuration
 
 Create `config/.env` file with your Telegram API credentials:
+
+1. Get your API credentials from https://my.telegram.org/apps
+2. Get channel ID from Telegram Web URL (e.g., https://web.telegram.org/k/#-1001234567890 → CHANNEL_ID=-1001234567890)
+3. Add to your .env file:
 
 ```
 
