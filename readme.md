@@ -1,5 +1,3 @@
-먼저 `README.md`부터 작성하겠습니다:
-
 ```markdown
 # TIMID (Telegram IMage & vIDeo downloader)
 
