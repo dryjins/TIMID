@@ -167,30 +167,18 @@ class TelegramDownloader:
             self.log_info(f"File already exists: {filename}")
             return
 
+        self.log_info(f"Total file size: ({message.video.size/1024/1024:.2f}MB)")
         try:
-            # Download chunks in parallel using asyncio.gather
-            tasks = [
-                self.download_video_chunk(message, i, 8)
-                for i in range(8)
-            ]
-            chunk_paths = await asyncio.gather(*tasks)
-
-            # Check if all chunks downloaded successfully
-            if None in chunk_paths:
-                raise Exception("Some chunks failed to download")
-
-            # Merge chunks
-            self.log_info(f"Merging chunks for {filename}")
-            with open(filepath, 'wb') as outfile:
-                for chunk_path in chunk_paths:
-                    with open(chunk_path, 'rb') as infile:
-                        outfile.write(infile.read())
-                    os.remove(chunk_path)  # Delete temp file after merging
-
-            # Clean up temp directory if empty
-            temp_dir = os.path.join(self.video_dir, "temp")
-            if not os.listdir(temp_dir):
-                os.rmdir(temp_dir)
+            with tqdm(
+                total=message.video.size,
+                unit='B',
+                unit_scale=True,
+                desc=filename
+            ) as progress:
+                await message.download_media(
+                    file=filepath,
+                    progress_callback=lambda c, t: progress.update(c - progress.n)
+                )
 
             self.save_progress(self.video_progress_file, self.video_progress, message.id, file_id)
             self.log_info(f"✅ Video download completed: {filename}")
@@ -202,47 +190,93 @@ class TelegramDownloader:
         except Exception as e:
             self.log_error(f"Video download failed ({filename}): {str(e)}")
 
+
     async def start(self):
-        """Start the download process"""
         await self.client.start()
         self.log_info("Connected to Telegram")
         
         try:
-            # Get total message count
+            channel = await self.client.get_entity(self.channel_id)
+            if not channel:
+                self.log_error("Channel not found")
+                return
+
+            self.log_info(f"Connected to channel {self.channel_id}")
+
+            # Total amount of messages
             total_messages = await self.client.get_messages(
-                self.channel_id,
-                limit=1
+                channel,
+                limit=1,
+                offset_date=None,
+                offset_id=0,
+                max_id=0,
+                min_id=0,
+                add_offset=0,
+                search=None,
+                filter=None
             )
+            
+            if not total_messages:
+                self.log_error("No messages")
+                return
+                
             total_count = total_messages[0].id
             self.log_info(f"Total messages: {total_count}")
-
-            # Download images first
+            
+            # Image downloads (10 concurrent)
             self.log_info("\n📸 Starting image downloads...")
+            active_image_downloads = set()
+            
             async for message in self.client.iter_messages(
-                self.channel_id,
+                channel,
                 min_id=self.image_progress['last_message_id'],
                 reverse=True
             ):
-                self.log_info(f"Processing message: {message.id} / {total_count}")
                 if message.photo:
-                    await self.download_image(message)
+                    self.log_info(f"Image Downloading: {message.id} / {total_count}")
+                    if len(active_image_downloads) >= 10:
+                        done, pending = await asyncio.wait(
+                            active_image_downloads, 
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        active_image_downloads = pending
+                    
+                    task = asyncio.create_task(self.download_image(message))
+                    active_image_downloads.add(task)
             
-            # Then download videos
+            if active_image_downloads:
+                await asyncio.wait(active_image_downloads)
+            
+            # Video downloads (4 concurrent)
             self.log_info("\n🎥 Starting video downloads...")
+            active_video_downloads = set()
+            
             async for message in self.client.iter_messages(
-                self.channel_id,
+                channel,
                 min_id=self.video_progress['last_message_id'],
                 reverse=True
             ):
-                self.log_info(f"Processing message: {message.id} / {total_count}")
                 if message.video:
-                    await self.download_video(message)
+                    self.log_info(f"Viedo Downloading: {message.id} / {total_count}")
+                    if len(active_video_downloads) >= 4:
+                        done, pending = await asyncio.wait(
+                            active_video_downloads, 
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        active_video_downloads = pending
+                    
+                    task = asyncio.create_task(self.download_video(message))
+                    active_video_downloads.add(task)
+            
+            if active_video_downloads:
+                await asyncio.wait(active_video_downloads)
 
         except Exception as e:
             self.log_error(f"Global error: {str(e)}")
         finally:
             await self.client.disconnect()
-            self.log_info("✅ Download process completed")
+            self.log_info("✅ All downloads completed")
+
 
     async def __aenter__(self):
         """Async context manager entry"""
