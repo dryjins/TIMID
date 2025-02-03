@@ -118,8 +118,40 @@ class TelegramDownloader:
         except Exception as e:
             self.log_error(f"Image download failed ({filename}): {str(e)}")
 
-    async def download_video(self, message):
-        """Download video from Telegram message"""
+    async def download_video_chunk(self, message, chunk_number, total_chunks):
+        """Download a specific chunk of video using iter_download"""
+        try:
+            chunk_filename = f"chunk_{message.id}_{chunk_number}_{total_chunks}.part"
+            temp_dir = os.path.join(self.video_dir, "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            chunk_path = os.path.join(temp_dir, chunk_filename)
+            
+            total_size = message.video.size
+            chunk_size = total_size // total_chunks
+            
+            # Log file size information
+            self.log_info(f"Total file size: {total_size:,} bytes ({total_size/1024/1024:.2f}MB)")
+            self.log_info(f"Chunk size: {chunk_size:,} bytes ({chunk_size/1024/1024:.2f}MB)")
+            
+            with tqdm(
+                total=chunk_size,
+                unit='B',
+                unit_scale=True,
+                desc=f"Chunk {chunk_number + 1}/{total_chunks}"
+            ) as progress:
+                with open(chunk_path, 'wb') as f:
+                    async for chunk in message.client.iter_download(
+                        message.media
+                    ):
+                        f.write(chunk)
+                        progress.update(len(chunk))
+                        
+            return chunk_path
+        except Exception as e:
+            self.log_error(f"Chunk {chunk_number + 1} download failed: {str(e)}")
+            return None
+
+    async def download_video(self, message):        
         if not message.video:
             return
 
@@ -131,25 +163,37 @@ class TelegramDownloader:
         filename = f"{message.date.strftime('%Y%m%d_%H%M%S')}_{message.id}.mp4"
         filepath = os.path.join(self.video_dir, filename)
 
-        # Check if file already exists
         if os.path.exists(filepath):
             self.log_info(f"File already exists: {filename}")
             return
 
         try:
-            async with self.semaphore:
-                with tqdm(
-                    total=message.video.size,
-                    unit='B',
-                    unit_scale=True,
-                    desc=filename
-                ) as self.progress_bar:
-                    await message.download_media(
-                        file=filepath,
-                        progress_callback=self.update_progress
-                    )
-                self.save_progress(self.video_progress_file, self.video_progress, message.id, file_id)
-                self.log_info(f"✅ Video download completed: {filename}")
+            # Download chunks in parallel using asyncio.gather
+            tasks = [
+                self.download_video_chunk(message, i, 8)
+                for i in range(8)
+            ]
+            chunk_paths = await asyncio.gather(*tasks)
+
+            # Check if all chunks downloaded successfully
+            if None in chunk_paths:
+                raise Exception("Some chunks failed to download")
+
+            # Merge chunks
+            self.log_info(f"Merging chunks for {filename}")
+            with open(filepath, 'wb') as outfile:
+                for chunk_path in chunk_paths:
+                    with open(chunk_path, 'rb') as infile:
+                        outfile.write(infile.read())
+                    os.remove(chunk_path)  # Delete temp file after merging
+
+            # Clean up temp directory if empty
+            temp_dir = os.path.join(self.video_dir, "temp")
+            if not os.listdir(temp_dir):
+                os.rmdir(temp_dir)
+
+            self.save_progress(self.video_progress_file, self.video_progress, message.id, file_id)
+            self.log_info(f"✅ Video download completed: {filename}")
 
         except FloodWaitError as e:
             wait_time = e.seconds + 5
