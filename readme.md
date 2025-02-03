@@ -1,6 +1,3 @@
-먼저 `README.md`부터 작성하겠습니다:
-
-```markdown
 # TIMID (Telegram IMage & vIDeo downloader)
 
 TIMID is a high-performance Telegram media downloader that supports concurrent downloads of images and videos from Telegram channels.
@@ -46,9 +43,14 @@ cp config/.env.example config/.env
 
 ```
 
+
 ## Configuration
 
 Create `config/.env` file with your Telegram API credentials:
+
+1. Get your API credentials from https://my.telegram.org/apps
+2. Get channel ID from Telegram Web URL (e.g., https://web.telegram.org/k/#-1001234567890 → CHANNEL_ID=-1001234567890)
+3. Add to your .env file:
 
 ```
 
@@ -87,4 +89,3 @@ TIMID/
 ## License
 
 MIT License - see LICENSE file for details
-```
