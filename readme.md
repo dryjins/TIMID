@@ -1,4 +1,3 @@
-```markdown
 # TIMID (Telegram IMage & vIDeo downloader)
 
 TIMID is a high-performance Telegram media downloader that supports concurrent downloads of images and videos from Telegram channels.
